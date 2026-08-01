@@ -1,0 +1,19 @@
+# Directories
+.vs/
+.vscode/
+Binaries/
+
+# Files
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+*.sln
+*.log
+Makefile
+
+# Exclude
+!Vendor/Binaries/
+Roms/
+
+# Windows
+Windows/Resources/resources.aps

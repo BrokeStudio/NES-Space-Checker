@@ -1,0 +1,64 @@
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#if TARGET_OS_MAC
+#include <libgen.h>
+#include <mach-o/dyld.h>
+
+/*
+  TODO: use this instead:
+    - https://wiki.libsdl.org/SDL2/SDL_GetPrefPath
+    - https://wiki.libsdl.org/SDL2/SDL_GetBasePath
+*/
+
+static int getExecutablePath(std::string &outputPath)
+{
+  outputPath.clear();
+
+#ifdef __APPLE__
+  char exePath[2048];
+  uint32_t bufSize = sizeof(exePath);
+  int result = _NSGetExecutablePath(exePath, &bufSize);
+
+  if (result == 0)
+  {
+    char *dir;
+    exePath[sizeof(exePath) - 1] = 0;
+
+    dir = ::dirname(exePath);
+
+    if (dir)
+    {
+      outputPath.assign(dir);
+      outputPath.append("/");
+      return 0;
+    }
+  }
+#endif
+
+  return -1;
+}
+
+static int getBundlePath(std::string &outputPath)
+{
+  outputPath.clear();
+  if (getExecutablePath(outputPath) == -1)
+  {
+    return -1;
+  }
+  outputPath += "../../../";
+  return 0;
+}
+
+static int getResourcesPath(std::string &outputPath)
+{
+  outputPath.clear();
+  if (getExecutablePath(outputPath) == -1)
+  {
+    return -1;
+  }
+  outputPath += "../Resources/";
+  return 0;
+}
+
+#endif
+#endif
