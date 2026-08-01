@@ -88,11 +88,11 @@ int main(int, char **)
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 
-  constexpr int windowWidth = 1280;
-  constexpr int windowHeight = 800;
+  constexpr int windowWidth = 1024;
+  constexpr int windowHeight = 720;
 
   SDL_Window *window = SDL_CreateWindow(
-      "NES Background Checker",
+      "NES Space Checker",
       SDL_WINDOWPOS_CENTERED,
       SDL_WINDOWPOS_CENTERED,
       windowWidth,
@@ -177,10 +177,10 @@ int main(int, char **)
     // render app
     App::Events appEvents = App::render();
     done |= appEvents.exit;
-    if (appEvents.set_window_title != lastTitle)
+    if (appEvents.setWindowTitle != lastTitle)
     {
-      lastTitle = appEvents.set_window_title;
-      SDL_SetWindowTitle(window, appEvents.set_window_title.c_str());
+      lastTitle = appEvents.setWindowTitle;
+      SDL_SetWindowTitle(window, appEvents.setWindowTitle.c_str());
     }
 
     // #if _DEBUG

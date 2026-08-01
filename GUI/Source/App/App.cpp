@@ -1,414 +1,311 @@
-#include <filesystem>
-#include "imgui.h"
-#include "imgui_internal.h" // for dockspace
-
 #include "App/App.hpp"
+
+#include <cstdio>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <utility>
+
 #include "Core/Logger/Logger.hpp"
+#include "Core/Nes.hpp"
 #include "UI/Dialog/FileDialog.hpp"
+#include "UI/RomViewport/RomViewport.hpp"
+#include "imgui.h"
+#include "imgui_internal.h"
 
 namespace App
 {
-  bool exit = false;
-  bool showDemo = false;
-
-  Logger log;
-
-  /*
-  8888b.   dP"Yb   dP""b8 88  dP .dP"Y8 88""Yb    db     dP""b8 888888
-   8I  Yb dP   Yb dP   `" 88odP  `Ybo." 88__dP   dPYb   dP   `" 88__
-   8I  dY Yb   dP Yb      88"Yb  o.`Y8b 88"""   dP__Yb  Yb      88""
-  8888Y"   YbodP   YboodP 88  Yb 8bodP' 88     dP""""Yb  YboodP 888888
-  */
-
-  static void dockspace_begin()
+  namespace
   {
-    ImGuiViewport *viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(viewport->Size);
-    ImGui::SetNextWindowViewport(viewport->ID);
+    bool exitRequested = false;
+    bool showDemo = false;
+    bool showSettings = false;
+    Logger log;
+    std::optional<Nes::Document> document;
+    RomViewport::Settings viewportSettings;
+    RomViewport::State viewportState;
+    int emptyMode = 0;
+    std::uint8_t customEmptyValue = 0x00;
 
-    ImGuiWindowFlags hostFlags =
-        ImGuiWindowFlags_NoDocking |
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoNavFocus;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-
-    ImGui::Begin("##DockHost", nullptr, hostFlags);
-
-    ImGui::PopStyleVar(3);
-
-    const ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar);
-
-    static bool layoutInitialized = false;
-    if (!layoutInitialized)
+    void load_file(const std::filesystem::path &path)
     {
-      layoutInitialized = true;
+      Nes::ParseResult result = Nes::load_document(path);
+      if (!result.success)
+      {
+        log.addf(LogLevel::Error, "Could not load '%s': %s", path.string().c_str(), result.error.c_str());
+        return;
+      }
 
-      ImGui::DockBuilderRemoveNode(dockspaceId);
-      ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-      ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->Size);
-
-      ImGuiID mainDock = dockspaceId;
-      ImGuiID leftDock = 0;
-      // ImGuiID rightDock = 0;
-      // ImGuiID bottomDock = 0;
-
-      leftDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Left, 0.15f, nullptr, &mainDock);
-      // rightDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Right, 0.25f, nullptr, &mainDock);
-      // bottomDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Down, 0.25f, nullptr, &mainDock);
-      // if (ImGuiDockNode *node = ImGui::DockBuilderGetNode(bottomDock))
-      //   node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
-
-      ImGui::DockBuilderDockWindow("Left", leftDock);
-      ImGui::DockBuilderDockWindow("Viewport", mainDock);
-      // ImGui::DockBuilderDockWindow("Inspector", rightDock);
-      // ImGui::DockBuilderDockWindow("Bottom", bottomDock);
-      ImGui::DockBuilderFinish(dockspaceId);
+      document = std::move(result.document);
+      const std::uint8_t emptyValue = emptyMode == 0 ? 0x00 : (emptyMode == 1 ? 0xFF : customEmptyValue);
+      document->analyze(emptyValue);
+      RomViewport::request_one_to_one(viewportState);
+      log.addf(LogLevel::Info, "Loaded '%s': %zu PRG bank(s), %zu CHR bank(s)",
+               document->path.filename().string().c_str(), document->prgBanks.size(), document->chrBanks.size());
+      if (!result.warning.empty())
+        log.addf(LogLevel::Warn, "%s", result.warning.c_str());
     }
 
-    ImGui::End();
+    void open_file_dialog()
+    {
+      Dialog::fileExt = ".nes";
+      Dialog::callback = [](const std::string &path, const std::string &filename)
+      {
+        std::filesystem::path selectedPath(path);
+        if (std::filesystem::is_directory(selectedPath))
+          selectedPath /= filename;
+        load_file(selectedPath);
+      };
+      Dialog::showFileOpen = true;
+    }
+
+    void close_file()
+    {
+      if (!document)
+        return;
+      log.addf(LogLevel::Info, "Closed '%s'", document->path.filename().string().c_str());
+      document.reset();
+      RomViewport::request_fit(viewportState);
+    }
+
+    void apply_empty_value()
+    {
+      if (!document)
+        return;
+      const std::uint8_t value = emptyMode == 0 ? 0x00 : (emptyMode == 1 ? 0xFF : customEmptyValue);
+      document->analyze(value);
+    }
+
+    void handle_shortcuts()
+    {
+      const ImGuiIO &io = ImGui::GetIO();
+      if (io.WantTextInput)
+        return;
+      if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false))
+        open_file_dialog();
+      if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q, false))
+        exitRequested = true;
+      if (io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_W, false) || ImGui::IsKeyPressed(ImGuiKey_F4, false)))
+        close_file();
+    }
+
+    void render_main_menu_bar()
+    {
+      if (!ImGui::BeginMainMenuBar())
+        return;
+
+      if (ImGui::BeginMenu("File"))
+      {
+        if (ImGui::MenuItem("Open...", "Ctrl+O"))
+          open_file_dialog();
+        if (!document)
+          ImGui::BeginDisabled();
+        if (ImGui::MenuItem("Close", "Ctrl+W"))
+          close_file();
+        if (!document)
+          ImGui::EndDisabled();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit", "Ctrl+Q"))
+          exitRequested = true;
+        ImGui::EndMenu();
+      }
+
+      if (ImGui::BeginMenu("View"))
+      {
+        ImGui::MenuItem("Settings", nullptr, &showSettings);
+        ImGui::Separator();
+        if (!document)
+          ImGui::BeginDisabled();
+        if (ImGui::MenuItem("Fit all"))
+          RomViewport::request_fit(viewportState);
+        if (ImGui::MenuItem("100%"))
+          RomViewport::request_one_to_one(viewportState);
+        if (!document)
+          ImGui::EndDisabled();
+#if _DEBUG
+        ImGui::Separator();
+        ImGui::MenuItem("ImGui demo", nullptr, &showDemo);
+#endif
+        ImGui::EndMenu();
+      }
+      ImGui::EndMainMenuBar();
+    }
+
+    void dockspace_begin()
+    {
+      ImGuiViewport *viewport = ImGui::GetMainViewport();
+      ImGui::SetNextWindowPos(viewport->WorkPos);
+      ImGui::SetNextWindowSize(viewport->WorkSize);
+      ImGui::SetNextWindowViewport(viewport->ID);
+
+      constexpr ImGuiWindowFlags HOST_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+                                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                               ImGuiWindowFlags_NoNavFocus;
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+      ImGui::Begin("##DockHost", nullptr, HOST_FLAGS);
+      ImGui::PopStyleVar(3);
+
+      const ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
+      ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_NoTabBar);
+      static bool layoutInitialized = false;
+      if (!layoutInitialized)
+      {
+        layoutInitialized = true;
+        ImGui::DockBuilderRemoveNode(dockspaceId);
+        ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+        ImGuiID mainDock = dockspaceId;
+        const ImGuiID leftDock = ImGui::DockBuilderSplitNode(mainDock, ImGuiDir_Left, 0.22f, nullptr, &mainDock);
+        ImGui::DockBuilderDockWindow("Settings", leftDock);
+        ImGui::DockBuilderDockWindow("Viewport", mainDock);
+        ImGui::DockBuilderFinish(dockspaceId);
+      }
+      ImGui::End();
+    }
+
+    void render_document_information()
+    {
+      if (!document)
+      {
+        ImGui::TextDisabled("No ROM loaded");
+        return;
+      }
+
+      const Nes::Header &header = document->header;
+      ImGui::TextWrapped("%s", document->path.filename().string().c_str());
+      if (ImGui::BeginTable("nes_header", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+      {
+        const auto row = [](const char *label, const char *value)
+        {
+          ImGui::TableNextRow();
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted(label);
+          ImGui::TableNextColumn();
+          ImGui::TextUnformatted(value);
+        };
+        char value[64];
+        row("Format", Nes::header_version_name(header.version));
+        std::snprintf(value, sizeof(value), "%u", header.mapperId);
+        row("Mapper", value);
+        if (header.version == Nes::HeaderVersion::Nes20)
+        {
+          std::snprintf(value, sizeof(value), "%u", header.submapperId);
+          row("Submapper", value);
+        }
+        row("Mirroring", Nes::mirroring_name(header.mirroring));
+        std::snprintf(value, sizeof(value), "%llu KiB", static_cast<unsigned long long>(header.prgRomSize / 1024));
+        row("PRG ROM", value);
+        std::snprintf(value, sizeof(value), "%llu KiB", static_cast<unsigned long long>(header.chrRomSize / 1024));
+        row("CHR ROM", value);
+        row("Trainer", header.hasTrainer ? "Yes" : "No");
+        row("Battery", header.hasBattery ? "Yes" : "No");
+        ImGui::EndTable();
+      }
+    }
+
+    void render_settings()
+    {
+      if (!showSettings)
+        return;
+
+      if (!ImGui::Begin("Settings", &showSettings))
+      {
+        ImGui::End();
+        return;
+      }
+      if (ImGui::Button("Open ROM...", ImVec2(-1.0f, 0.0f)))
+        open_file_dialog();
+
+      ImGui::SeparatorText("Document");
+      render_document_information();
+
+      ImGui::SeparatorText("Display");
+      bool visibilityChanged = false;
+      visibilityChanged |= ImGui::Checkbox("Show PRG", &viewportSettings.showPrg);
+      visibilityChanged |= ImGui::Checkbox("Show CHR", &viewportSettings.showChr);
+      ImGui::SetNextItemWidth(-1.0f);
+      if (ImGui::SliderInt("Banks per row", &viewportSettings.banksPerRow, 1, 64))
+        visibilityChanged = true;
+      if (visibilityChanged)
+        RomViewport::request_fit(viewportState);
+      ImGui::ColorEdit3("PRG color", &viewportSettings.prgColor.x);
+      ImGui::ColorEdit3("CHR color", &viewportSettings.chrColor.x);
+
+      ImGui::SeparatorText("Empty byte");
+      bool emptyChanged = false;
+      emptyChanged |= ImGui::RadioButton("$00", &emptyMode, 0);
+      ImGui::SameLine();
+      emptyChanged |= ImGui::RadioButton("$FF", &emptyMode, 1);
+      ImGui::SameLine();
+      emptyChanged |= ImGui::RadioButton("Custom", &emptyMode, 2);
+      if (emptyMode != 2)
+        ImGui::BeginDisabled();
+      ImGui::SetNextItemWidth(-1.0f);
+      emptyChanged |= ImGui::InputScalar("##custom_empty", ImGuiDataType_U8, &customEmptyValue, nullptr, nullptr, "%02X",
+                                         ImGuiInputTextFlags_CharsHexadecimal);
+      if (emptyMode != 2)
+        ImGui::EndDisabled();
+      if (emptyChanged)
+        apply_empty_value();
+
+      ImGui::SeparatorText("Navigation");
+      if (ImGui::Button("Fit all"))
+        RomViewport::request_fit(viewportState);
+      ImGui::SameLine();
+      if (ImGui::Button("100%"))
+        RomViewport::request_one_to_one(viewportState);
+      ImGui::Text("Zoom: %.2f%% (%.2f px/byte)", viewportState.zoom * 100.0, viewportState.zoom);
+      ImGui::TextDisabled("Wheel: zoom");
+      ImGui::TextDisabled("Middle/right drag or Space + drag: pan");
+
+      ImGui::SeparatorText("Log");
+      if (ImGui::BeginChild("##log", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders))
+      {
+        for (const LogLine &line : log.lines())
+        {
+          const ImVec4 color = line.level == LogLevel::Error ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                               : line.level == LogLevel::Warn ? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
+                                                            : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+          ImGui::PushStyleColor(ImGuiCol_Text, color);
+          ImGui::TextWrapped("%s", line.text.c_str());
+          ImGui::PopStyleColor();
+        }
+      }
+      ImGui::EndChild();
+      ImGui::End();
+    }
   }
 
-  /**
-   * @brief called from main.cpp when a file is dropped in the app
-   *
-   * @param selectedPath
-   */
   void on_file_drop(const std::string &selectedPath)
   {
+    load_file(selectedPath);
   }
 
-  // /**
-  //  * @brief close the currently opened manifest
-  //  *
-  //  */
-  // void manifest_close()
-  // {
-  //   if (state.manifest.isOpen)
-  //   {
-  //     state = {};
-  //     state.manifest.clear();
-  //   }
-  // }
-
-  // /**
-  //  * @brief save manifest
-  //  *
-  //  */
-  // void manifest_save()
-  // {
-  //   if (!state.manifest.isOpen)
-  //   {
-  //     state.log.addf(LogLevel::Error, "No manifest currently opened");
-  //     return;
-  //   }
-
-  //   if (!state.manifest.save())
-  //   {
-  //     state.log.addf(LogLevel::Error, "%s", state.manifest.lastError.c_str());
-  //   }
-  //   else
-  //   {
-  //     state.log.addf(LogLevel::Info, "Manifest '%s' successfully saved", state.manifest.path.filename().string().c_str());
-  //   }
-  // }
-
-  // /**
-  //  * @brief save manifest as...
-  //  *
-  //  * @param selectedPath
-  //  * @param selectedFilename
-  //  */
-  // void manifest_save_as(const std::string &selectedPath, const std::string &selectedFilename)
-  // {
-  //   if (!state.manifest.isOpen)
-  //   {
-  //     state.log.addf(LogLevel::Error, "No manifest currently opened");
-  //     return;
-  //   }
-
-  //   if (!state.manifest.save_as(std::filesystem::path(selectedPath)))
-  //   {
-  //     state.log.addf(LogLevel::Error, "%s", state.manifest.lastError.c_str());
-  //   }
-  //   else
-  //   {
-  //     state.log.addf(LogLevel::Info, "Manifest successfully saved as '%s'", state.manifest.path.filename().string().c_str());
-  //   }
-  // }
-
-  // /**
-  //  * @brief
-  //  *
-  //  */
-  // void manifest_save_dialog()
-  // {
-  //   Dialog::fileExt = ".json";
-  //   Dialog::callback = manifest_save_as;
-  //   Dialog::showFileSave = true;
-  // }
-
-  /*
-  .dP"Y8 88  88  dP"Yb  88""Yb 888888  dP""b8 88   88 888888 .dP"Y8
-  `Ybo." 88  88 dP   Yb 88__dP   88   dP   `" 88   88   88   `Ybo."
-  o.`Y8b 888888 Yb   dP 88"Yb    88   Yb      Y8   8P   88   o.`Y8b
-  8bodP' 88  88  YbodP  88  Yb   88    YboodP `YbodP'   88   8bodP'
-  */
-
-  /**
-   * @brief handle shortcuts
-   *
-   */
-  // void handle_shortcuts(State &state)
-  // {
-  //   ImGuiIO &io = ImGui::GetIO();
-  //   // if (!io.KeyCtrl || io.WantTextInput)
-  //   // {
-  //   //   return;
-  //   // }
-
-  //   // Ctrl+N
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false))
-  //   {
-  //     return manifest_create();
-  //   }
-
-  //   // Ctrl+O
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false))
-  //   {
-  //     return manifest_open_dialog();
-  //   }
-
-  //   // Ctrl+F4
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F4, false))
-  //   {
-  //     return manifest_close();
-  //   }
-
-  //   // Ctrl+Shift+S
-  //   if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
-  //   {
-  //     if (state.manifest.isOpen)
-  //     {
-  //       return manifest_save_dialog();
-  //     }
-  //   }
-
-  //   // Ctrl+S
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
-  //   {
-  //     if (state.manifest.isOpen)
-  //     {
-  //       return manifest_save();
-  //     }
-  //   }
-
-  //   // Ctrl+Q
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q, false))
-  //   {
-  //     exit = true;
-  //     return;
-  //   }
-
-  //   // Ctrl+Z
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))
-  //   {
-  //     if (state.manifest.isOpen && state.undo.can_undo())
-  //     {
-  //       state.undo_one();
-  //       return;
-  //     }
-  //   }
-
-  //   // Ctrl+Y
-  //   if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false))
-  //   {
-  //     if (state.manifest.isOpen && state.undo.can_redo())
-  //     {
-  //       state.redo_one();
-  //       return;
-  //     }
-  //   }
-  // }
-
-  /*
-  8b    d8 888888 88b 88 88   88     88""Yb    db    88""Yb
-  88b  d88 88__   88Yb88 88   88     88__dP   dPYb   88__dP
-  88YbdP88 88""   88 Y88 Y8   8P     88""Yb  dP__Yb  88"Yb
-  88 YY 88 888888 88  Y8 `YbodP'     88oodP dP""""Yb 88  Yb
-  */
-
-  /**
-   * @brief render main menu bar
-   *
-   */
-  //   void render_main_menu_bar()
-  //   {
-  //     if (!ImGui::BeginMainMenuBar())
-  //     {
-  //       return;
-  //     }
-
-  //     if (ImGui::BeginMenu("File"))
-  //     {
-  //       if (ImGui::MenuItem("New", "Ctrl+N"))
-  //       {
-  //         manifest_create();
-  //       }
-
-  //       if (ImGui::MenuItem("Open...", "Ctrl+O"))
-  //       {
-  //         manifest_open_dialog();
-  //       }
-
-  //       bool manifestIsOpen = state.manifest.isOpen;
-  //       if (!manifestIsOpen)
-  //       {
-  //         ImGui::BeginDisabled();
-  //       }
-
-  //       if (ImGui::MenuItem("Save", "Ctrl+S"))
-  //       {
-  //         if (!state.manifest.save())
-  //           ImGui::Text("Error: %s", state.manifest.lastError.c_str());
-  //       }
-
-  //       if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
-  //       {
-  //         manifest_save_dialog();
-  //       }
-
-  //       if (ImGui::MenuItem("Close", "Ctrl+F4"))
-  //       {
-  //         manifest_close();
-  //       }
-
-  //       if (!manifestIsOpen)
-  //       {
-  //         ImGui::EndDisabled();
-  //       }
-
-  //       if (ImGui::MenuItem("Exit", "Ctrl+Q"))
-  //       {
-  //         exit = true;
-  //       }
-
-  //       ImGui::EndMenu();
-  //     }
-
-  //     if (ImGui::BeginMenu("Edit"))
-  //     {
-  //       bool manifestIsOpen = state.manifest.isOpen;
-  //       if (!manifestIsOpen)
-  //       {
-  //         ImGui::BeginDisabled();
-  //       }
-
-  //       const bool canUndo = manifestIsOpen && state.undo.can_undo();
-  //       const bool canRedo = manifestIsOpen && state.undo.can_redo();
-
-  //       if (!canUndo)
-  //       {
-  //         ImGui::BeginDisabled();
-  //       }
-  //       if (ImGui::MenuItem("Undo", "Ctrl+Z"))
-  //       {
-  //         state.undo_one();
-  //       }
-  //       if (!canUndo)
-  //       {
-  //         ImGui::EndDisabled();
-  //       }
-
-  //       if (!canRedo)
-  //       {
-  //         ImGui::BeginDisabled();
-  //       }
-  //       if (ImGui::MenuItem("Redo", "Ctrl+Y"))
-  //       {
-  //         state.redo_one();
-  //       }
-  //       if (!canRedo)
-  //       {
-  //         ImGui::EndDisabled();
-  //       }
-
-  //       if (!manifestIsOpen)
-  //       {
-  //         ImGui::EndDisabled();
-  //       }
-
-  //       ImGui::EndMenu();
-  //     }
-
-  //     if (ImGui::BeginMenu("Settings"))
-  //     {
-  // #if _DEBUG
-  //       ImGui::Checkbox("Show ImGui Demo", &showDemo);
-  // #endif
-  //       ImGui::EndMenu();
-  //     }
-
-  //     ImGui::EndMainMenuBar();
-  //   }
-
-  /*
-  88""Yb 888888 88b 88 8888b.  888888 88""Yb
-  88__dP 88__   88Yb88  8I  Yb 88__   88__dP
-  88"Yb  88""   88 Y88  8I  dY 88""   88"Yb
-  88  Yb 888888 88  Y8 8888Y"  888888 88  Yb
-  */
-
-  /**
-   * @brief render the app
-   *
-   * @return Events simple object to pass messages to caller (usually main.cpp)
-   */
   Events render()
   {
-
-    // app and global stuff
     Dialog::render();
-    // handle_shortcuts(state);
-    // render_main_menu_bar();
-    dockspace_begin();
+    handle_shortcuts();
+    render_main_menu_bar();
+      dockspace_begin();
+      render_settings();
 
-    // Dockspace left panel
-    ImGui::Begin("Left");
-
-    // display settings/options
-    ImGui::SeparatorText("Settings");
-
-    ImGui::End();
-
-    // Dockspace main/center panel
     ImGui::Begin("Viewport");
-
+    RomViewport::render(document ? &*document : nullptr, viewportSettings, viewportState);
     ImGui::End();
 
-    // app events to return to caller (main.cpp)
-    Events appEvents{};
-    appEvents.exit = exit;
-    appEvents.showDemo = showDemo;
-    // if (state.manifest.isOpen)
-    // {
-    //   if (state.manifest.path.empty())
-    //     appEvents.set_window_title += " - unamed.json";
-    //   else
-    //     appEvents.set_window_title += " - " + state.manifest.path.filename().string();
-    // }
+#if _DEBUG
+    if (showDemo)
+      ImGui::ShowDemoWindow(&showDemo);
+#endif
 
-    // if (state.manifest.isDirty)
-    //   appEvents.set_window_title += " (*)";
-
-    return appEvents;
+    Events events{};
+    events.exit = exitRequested;
+    events.showDemo = showDemo;
+    if (document)
+      events.setWindowTitle += " - " + document->path.filename().string();
+    return events;
   }
 }

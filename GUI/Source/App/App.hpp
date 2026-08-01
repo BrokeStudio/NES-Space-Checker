@@ -8,7 +8,7 @@ namespace App
   {
     bool exit = false;
     bool showDemo = false;
-    std::string set_window_title = "NES Space Checker";
+    std::string setWindowTitle = "NES Space Checker";
   };
 
   Events render();

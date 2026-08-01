@@ -7,9 +7,9 @@
     <key>CFBundleGetInfoString</key>
     <string>NesSpaceChecker-macOS-app</string>
     <key>CFBundleIconFile</key>
-    <string>broke-studio-logo-256x256.png</string>
+    <string>app-icon.png</string>
     <key>CFBundleIdentifier</key>
-    <string>inl.retro.gui</string>
+    <string>nes.space.checker</string>
     <key>CFBundleName</key>
     <string>NesSpaceChecker-macOS-app</string>
     <key>CFBundlePackageType</key>

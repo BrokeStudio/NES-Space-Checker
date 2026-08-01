@@ -234,5 +234,5 @@ filter { "system:macosx", "configurations:Dist" }
     "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources\"",
     "{COPY} \"../macOS/Info.plist\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents\"",
     "{COPY} \"%{cfg.targetdir}/NesSpaceChecker\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/MacOS\"",
-    "{COPY} \"../macOS/INL.png\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources\"",
+    "{COPY} \"../macOS/app-icon.png\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources\"",
   }

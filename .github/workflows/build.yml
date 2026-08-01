@@ -1,0 +1,116 @@
+name: build
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+env:
+  # Path to the solution file relative to the root of the project.
+  SOLUTION_FILE_PATH: NesSpaceChecker.slnx
+
+  # Configuration type to build.
+  # You can convert this to a build matrix if you need coverage of multiple configuration types.
+  # https://docs.github.com/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  BUILD_CONFIGURATION: Dist
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    strategy:
+      matrix:
+        platform:
+          [
+            { arch: "Win32", SDL2libPath: "x86", binPath: "x86" },
+            { arch: "x64", SDL2libPath: "x64", binPath: "x86_64" },
+          ]
+      fail-fast: false
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: abel0b/setup-premake@v2.4
+        with:
+          version: "5.0.0-beta8"
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Prepare MSVC project files
+        run: premake5 --file=Build.lua vs2026
+
+      - name: Build
+        run: msbuild NesSpaceChecker.slnx -nologo -t:rebuild -verbosity:normal -clp:ForceConsoleColor -m -property:Configuration=Dist -p:Platform=${{ matrix.platform.arch }}
+
+      - name: Upload NesSpaceChecker
+        uses: actions/upload-artifact@v7
+        with:
+          name: NesSpaceChecker_Windows_${{ matrix.platform.arch }}
+          path: Binaries/windows-${{ matrix.platform.binPath }}/Dist/NesSpaceChecker
+
+  linux-ubuntu64:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: abel0b/setup-premake@v2.4
+        with:
+          version: "5.0.0-beta2"
+
+      - name: Install dependencies
+        run: sudo apt-get install libsdl2-dev libusb-1.0-0-dev
+
+      - name: Generate make file
+        run: premake5 --cc=clang --file=Build.lua gmake2
+
+      - name: Build
+        run: make config=dist
+
+      - name: Upload NesSpaceChecker
+        uses: actions/upload-artifact@v7
+        with:
+          name: NesSpaceChecker_Linux
+          path: Binaries/linux-x86_64/Dist/NesSpaceChecker
+
+  macos:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: abel0b/setup-premake@v2.4
+        with:
+          version: "5.0.0-beta2"
+
+      - name: Install dependencies
+        run: |
+          if brew tap | grep -qx "aws/tap"; then
+            brew untap aws/tap
+          fi
+          brew install sdl2
+
+      - name: Prepare make file
+        run: premake5 --file=Build.lua gmake2
+
+      - name: Build
+        run: make config=dist verbose=1
+
+      - name: Upload NesSpaceChecker (app)
+        uses: actions/upload-artifact@v7
+        with:
+          name: NesSpaceChecker_macOS
+          path: Binaries/macosx-universal/Dist/app
+
+      # - name: Delete GUI executable
+      #   run: |
+      #     rm Binaries/macosx-universal/Dist/NesSpaceChecker/NesSpaceChecker
+
+      - name: Upload NesSpaceChecker CLI
+        uses: actions/upload-artifact@v7
+        with:
+          name: NesSpaceCheckerCLI_macOS
+          path: Binaries/macosx-universal/Dist/NesSpaceChecker
