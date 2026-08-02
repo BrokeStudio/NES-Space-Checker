@@ -127,7 +127,6 @@ filter "system:windows"
   }
   includedirs {
     "../External/SDL2/include",
-    "../External/libusb/include"
   }
   links {
     "winmm.lib",
@@ -154,7 +153,6 @@ filter { "system:windows", "configurations:Debug", "platforms:x86_64" }
   }
   libdirs {
     "../External/SDL2/lib/x64-static-debug",
-    "../External/libusb/VS2022/MS64/static",
   }
 
 filter { "system:windows", "configurations:Release or Dist", "platforms:x86" }
@@ -163,7 +161,6 @@ filter { "system:windows", "configurations:Release or Dist", "platforms:x86" }
   }
   libdirs {
     "../External/SDL2/lib/x86-static-release",
-    "../External/libusb/VS2022/MS32/static",
   }
 
 filter { "system:windows", "configurations:Release or Dist", "platforms:x86_64" }
@@ -180,10 +177,7 @@ filter "system:linux"
   buildoptions { "`sdl2-config --cflags`" }
   linkoptions { "`sdl2-config --libs`" }
   links {
-    -- "usb-1.0",
     "GL",
-    -- "dl",
-    -- "pthread",
     "SDL2"
   }
   prebuildcommands {
@@ -201,19 +195,25 @@ filter { "system:linux", "configurations:Dist" }
 -- macOS
 
 filter "system:macosx"
-  buildoptions { "`sdl2-config --cflags`" }
+  includedirs {
+    "../macOS",
+    "../External/SDL2-macOS/SDL2.framework/Headers",
+  }
+
+  buildoptions {
+    "-mmacosx-version-min=12.0",
+    "-F../External/SDL2-macOS",
+  }
+
   linkoptions {
-    "`sdl2-config --libs`",
+    "-mmacosx-version-min=12.0",
+    "-F../External/SDL2-macOS",
+    "-framework SDL2",
+    "-Wl,-rpath,@executable_path/../Frameworks",
     "-framework OpenGL",
-    "-framework CoreFoundation"
+    "-framework CoreFoundation",
   }
-  links {
-    "usb-1.0",
-  }
-  includedirs
-  {
-    "../macOS"
-  }
+
   prebuildcommands {
     "sh ./increment-build.sh"
   }
@@ -228,11 +228,12 @@ filter { "system:macosx", "configurations:Dist" }
   postbuildcommands
   {
     "{RMDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app\"",
-    "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app\"",
-    "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents\"",
     "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/MacOS\"",
     "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources\"",
-    "{COPY} \"../macOS/Info.plist\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents\"",
-    "{COPY} \"%{cfg.targetdir}/NesSpaceChecker\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/MacOS\"",
-    "{COPY} \"../macOS/app-icon.png\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources\"",
+    "{MKDIR} \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Frameworks\"",
+
+    "ditto \"../External/SDL2-macOS/SDL2.framework\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Frameworks/SDL2.framework\"",
+    "{COPY} \"../macOS/Info.plist\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Info.plist\"",
+    "{COPY} \"../macOS/AppIcon.icns\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/Resources/AppIcon.icns\"",
+    "{COPY} \"%{cfg.targetdir}/NesSpaceChecker\" \"%{cfg.targetdir}/../app/NesSpaceChecker.app/Contents/MacOS/NesSpaceChecker\"",
   }

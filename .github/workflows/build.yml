@@ -77,40 +77,106 @@ jobs:
           path: Binaries/linux-x86_64/Dist/NesSpaceChecker
 
   macos:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            premake_version: 5.0.0-beta8
+            artifact_suffix: AppleSilicon
+          - arch: x86_64
+            runner: macos-15-intel
+            premake_version: 5.0.0-beta2
+            artifact_suffix: Intel
+
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v7
 
       - uses: abel0b/setup-premake@v2.4
         with:
-          version: "5.0.0-beta2"
+          version: ${{ matrix.premake_version }}
 
-      - name: Install dependencies
+      - name: Make Premake executable
+        run: chmod +x "$GITHUB_WORKSPACE/.premake/premake5"
+
+      - name: Download SDL2 framework
         run: |
-          if brew tap | grep -qx "aws/tap"; then
-            brew untap aws/tap
-          fi
-          brew install sdl2
+          SDL_DMG="$RUNNER_TEMP/SDL2-2.32.10.dmg"
+          SDL_MOUNT_POINT="$RUNNER_TEMP/SDL2-mount"
+
+          curl -L \
+            -o "$SDL_DMG" \
+            "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.dmg"
+
+          mkdir -p "$SDL_MOUNT_POINT"
+
+          hdiutil attach "$SDL_DMG" \
+            -readonly \
+            -nobrowse \
+            -mountpoint "$SDL_MOUNT_POINT"
+
+          mkdir -p External/SDL2-macOS
+
+          ditto \
+            "$SDL_MOUNT_POINT/SDL2.framework" \
+            "External/SDL2-macOS/SDL2.framework"
+
+          hdiutil detach "$SDL_MOUNT_POINT"
 
       - name: Prepare make file
-        run: premake5 --file=Build.lua gmake2
+        run: premake5 --arch=${{ matrix.arch }} --file=Build.lua gmake2
 
       - name: Build
         run: make config=dist verbose=1
 
-      - name: Upload NesSpaceChecker (app)
+      - name: Locate macOS app
+        run: |
+          APP_PATH="$(find Binaries -type d -name NesSpaceChecker.app -print -quit)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "NesSpaceChecker.app was not found"
+            exit 1
+          fi
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign macOS app
+        run: |
+          codesign --force --sign - \
+            "$APP_PATH/Contents/Frameworks/SDL2.framework"
+
+          codesign --force --sign - \
+            "$APP_PATH"
+
+      - name: Verify macOS app
+        run: |
+          EXECUTABLE_PATH="$APP_PATH/Contents/MacOS/NesSpaceChecker"
+
+          plutil -lint "$APP_PATH/Contents/Info.plist"
+          test -x "$EXECUTABLE_PATH"
+          file "$EXECUTABLE_PATH"
+          lipo "$EXECUTABLE_PATH" -verify_arch ${{ matrix.arch }}
+          lipo \
+            "$APP_PATH/Contents/Frameworks/SDL2.framework/Versions/A/SDL2" \
+            -verify_arch ${{ matrix.arch }}
+          vtool -show-build "$EXECUTABLE_PATH"
+          vtool -show-build \
+            "$APP_PATH/Contents/Frameworks/SDL2.framework/Versions/A/SDL2"
+          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+
+      - name: Package macOS app
+        run: |
+          tar -czf \
+            "$RUNNER_TEMP/NesSpaceChecker-${{ matrix.artifact_suffix }}.tar.gz" \
+            -C "$(dirname "$APP_PATH")" \
+            "$(basename "$APP_PATH")"
+
+      - name: Upload NesSpaceChecker app
         uses: actions/upload-artifact@v7
         with:
-          name: NesSpaceChecker_macOS
-          path: Binaries/macosx-universal/Dist/app
-
-      # - name: Delete GUI executable
-      #   run: |
-      #     rm Binaries/macosx-universal/Dist/NesSpaceChecker/NesSpaceChecker
-
-      - name: Upload NesSpaceChecker CLI
-        uses: actions/upload-artifact@v7
-        with:
-          name: NesSpaceCheckerCLI_macOS
-          path: Binaries/macosx-universal/Dist/NesSpaceChecker
+          name: NesSpaceChecker_macOS_${{ matrix.artifact_suffix }}
+          path: ${{ runner.temp }}/NesSpaceChecker-${{ matrix.artifact_suffix }}.tar.gz
+          archive: false

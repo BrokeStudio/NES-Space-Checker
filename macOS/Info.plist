@@ -4,15 +4,36 @@
   <dict>
     <key>CFBundleExecutable</key>
     <string>NesSpaceChecker</string>
+
     <key>CFBundleGetInfoString</key>
     <string>NesSpaceChecker-macOS-app</string>
+
     <key>CFBundleIconFile</key>
-    <string>app-icon.png</string>
+    <string>AppIcon.icns</string>
+
     <key>CFBundleIdentifier</key>
     <string>nes.space.checker</string>
+
     <key>CFBundleName</key>
     <string>NesSpaceChecker-macOS-app</string>
+
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>NES Space Checker</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+
   </dict>
 </plist>
