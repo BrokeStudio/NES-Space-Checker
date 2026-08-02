@@ -175,10 +175,9 @@ filter { "system:windows", "configurations:Release or Dist", "platforms:x86_64" 
 
 filter "system:linux"
   buildoptions { "`sdl2-config --cflags`" }
-  linkoptions { "`sdl2-config --libs`" }
+  linkoptions { "`sdl2-config --static-libs`" }
   links {
-    "GL",
-    "SDL2"
+    "GL"
   }
   prebuildcommands {
     "sh ./increment-build.sh"
