@@ -6,12 +6,17 @@
 #include <string>
 #include <utility>
 
+#include "IconsFontAwesome6.h"
+
 #include "Core/Logger/Logger.hpp"
 #include "Core/Nes.hpp"
 #include "UI/Dialog/FileDialog.hpp"
 #include "UI/RomViewport/RomViewport.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "build.h"
+#include "version.h"
+#include <SDL_version.h>
 
 namespace App
 {
@@ -20,6 +25,7 @@ namespace App
     bool exitRequested = false;
     bool showDemo = false;
     bool showSettings = false;
+    bool showAbout = false;
     Logger log;
     std::optional<Nes::Document> document;
     RomViewport::Settings viewportSettings;
@@ -89,6 +95,65 @@ namespace App
         close_file();
     }
 
+    void render_about()
+    {
+
+      if (!showAbout)
+        return;
+
+      const ImGuiViewport *viewport = ImGui::GetMainViewport();
+      ImGui::SetNextWindowPos(viewport->Pos);
+      ImGui::SetNextWindowSize(viewport->Size);
+      ImGui::SetNextWindowViewport(viewport->ID);
+      ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+      constexpr ImGuiWindowFlags OVERLAY_FLAGS = ImGuiWindowFlags_NoDecoration |
+                                                 ImGuiWindowFlags_NoMove |
+                                                 ImGuiWindowFlags_NoSavedSettings |
+                                                 ImGuiWindowFlags_NoDocking |
+                                                 ImGuiWindowFlags_NoNav |
+                                                 ImGuiWindowFlags_NoBringToFrontOnFocus;
+      ImGui::Begin("##about_overlay", nullptr, OVERLAY_FLAGS);
+      ImGui::End();
+      ImGui::PopStyleColor();
+
+      ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+      ImGui::SetNextWindowViewport(viewport->ID);
+      constexpr ImGuiWindowFlags ABOUT_FLAGS = ImGuiWindowFlags_AlwaysAutoResize |
+                                               ImGuiWindowFlags_NoMove |
+                                               ImGuiWindowFlags_NoCollapse |
+                                               ImGuiWindowFlags_NoTitleBar;
+
+      if (ImGui::Begin("About", nullptr, ABOUT_FLAGS))
+      {
+
+#if defined(_DEBUG) || defined(_RELEASE)
+        ImGui::Text(ICON_FA_MAGNIFYING_GLASS " NES Space Checker v%s-dev+build.%d", APP_VERSION, APP_BUILD);
+#else
+        ImGui::Text(ICON_FA_MAGNIFYING_GLASS " NES Space Checker v%s", APP_VERSION);
+#endif
+        ImGui::Separator();
+        ImGui::Text("2026, Broke Studio");
+        ImGui::Text("Developed by Antoine Gohin & Codex");
+        ImGui::Separator();
+        ImGui::Text("Based on the original");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("NES Space Checker", "https://shiru.untergrund.net");
+        ImGui::Text("by Shiru");
+        ImGui::Separator();
+        ImGui::Text("Powered by");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("Dear ImGui", "https://github.com/ocornut/imgui");
+        ImGui::SameLine();
+        ImGui::Text("v" IMGUI_VERSION);
+        ImGui::Text("by Omar Cornut");
+        ImGui::Separator();
+        ImGui::Text("SDL2 v%d.%d.%d", SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
+        if (ImGui::Button("  OK  "))
+          showAbout = false;
+      }
+      ImGui::End();
+    }
+
     void render_main_menu_bar()
     {
       if (!ImGui::BeginMainMenuBar())
@@ -128,6 +193,14 @@ namespace App
 #endif
         ImGui::EndMenu();
       }
+
+      if (ImGui::BeginMenu("?"))
+      {
+        if (ImGui::MenuItem("About"))
+          showAbout = true;
+        ImGui::EndMenu();
+      }
+
       ImGui::EndMainMenuBar();
     }
 
@@ -139,9 +212,9 @@ namespace App
       ImGui::SetNextWindowViewport(viewport->ID);
 
       constexpr ImGuiWindowFlags HOST_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
-                                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                               ImGuiWindowFlags_NoNavFocus;
+                                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                              ImGuiWindowFlags_NoNavFocus;
       ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
       ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -216,8 +289,6 @@ namespace App
         ImGui::End();
         return;
       }
-      if (ImGui::Button("Open ROM...", ImVec2(-1.0f, 0.0f)))
-        open_file_dialog();
 
       ImGui::SeparatorText("Document");
       render_document_information();
@@ -266,9 +337,9 @@ namespace App
       {
         for (const LogLine &line : log.lines())
         {
-          const ImVec4 color = line.level == LogLevel::Error ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+          const ImVec4 color = line.level == LogLevel::Error  ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
                                : line.level == LogLevel::Warn ? ImVec4(1.0f, 0.75f, 0.25f, 1.0f)
-                                                            : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+                                                              : ImGui::GetStyleColorVec4(ImGuiCol_Text);
           ImGui::PushStyleColor(ImGuiCol_Text, color);
           ImGui::TextWrapped("%s", line.text.c_str());
           ImGui::PopStyleColor();
@@ -289,17 +360,21 @@ namespace App
     Dialog::render();
     handle_shortcuts();
     render_main_menu_bar();
-      dockspace_begin();
-      render_settings();
+    dockspace_begin();
+    render_settings();
 
     ImGui::Begin("Viewport");
+    ImGui::BeginDisabled(showAbout);
     RomViewport::render(document ? &*document : nullptr, viewportSettings, viewportState);
+    ImGui::EndDisabled();
     ImGui::End();
 
 #if _DEBUG
     if (showDemo)
       ImGui::ShowDemoWindow(&showDemo);
 #endif
+
+    render_about();
 
     Events events{};
     events.exit = exitRequested;

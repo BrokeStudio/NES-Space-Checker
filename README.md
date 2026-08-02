@@ -2,6 +2,10 @@
 
 TODO - write content ...
 
+Developed by Antoine Gohin & Codex.  
+Based on the original [NES Space Checker](https://shiru.untergrund.net) by Shiru.  
+Powered by Dear [ImGui](https://github.com/ocornut/imgui) by Omar Cornut.
+
 ---
 
 ## Compiling
