@@ -25,5 +25,5 @@ namespace RomViewport
 
   void request_fit(State &state);
   void request_one_to_one(State &state);
-  void render(const Nes::Document *document, const Settings &settings, State &state);
+  void render(const Nes::Document *document, const Settings &settings, State &state, bool showZoomOverlay = true);
 }

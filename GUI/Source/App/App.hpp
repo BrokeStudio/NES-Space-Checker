@@ -12,5 +12,6 @@ namespace App
   };
 
   Events render();
+  void process_pending_export();
   void on_file_drop(const std::string &selectedPath);
 }

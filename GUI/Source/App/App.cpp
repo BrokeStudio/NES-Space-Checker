@@ -1,10 +1,18 @@
 #include "App/App.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
+
+#include <SDL_opengl.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 #include "IconsFontAwesome6.h"
 
@@ -30,6 +38,10 @@ namespace App
     std::optional<Nes::Document> document;
     RomViewport::Settings viewportSettings;
     RomViewport::State viewportState;
+    std::optional<std::filesystem::path> pendingExportPath;
+    int pendingExportDelay = 0;
+    ImVec2 viewportCaptureMinimum;
+    ImVec2 viewportCaptureMaximum;
     int emptyMode = 0;
     std::uint8_t customEmptyValue = 0x00;
 
@@ -72,6 +84,31 @@ namespace App
       log.addf(LogLevel::Info, "Closed '%s'", document->path.filename().string().c_str());
       document.reset();
       RomViewport::request_fit(viewportState);
+    }
+
+    void export_png_dialog()
+    {
+      if (!document)
+        return;
+
+      Dialog::fileExt = ".png";
+      Dialog::callback = [](const std::string &path, const std::string &filename)
+      {
+        std::filesystem::path outputPath(path);
+        if (std::filesystem::is_directory(outputPath))
+          outputPath /= filename;
+        if (outputPath.extension().empty())
+          outputPath.replace_extension(".png");
+
+        if (!document)
+        {
+          log.addf(LogLevel::Error, "Could not export PNG '%s': no document is loaded.", outputPath.string().c_str());
+          return;
+        }
+        pendingExportPath = std::move(outputPath);
+        pendingExportDelay = 1;
+      };
+      Dialog::showFileSave = true;
     }
 
     void apply_empty_value()
@@ -167,6 +204,8 @@ namespace App
           ImGui::BeginDisabled();
         if (ImGui::MenuItem("Close", "Ctrl+W"))
           close_file();
+        if (ImGui::MenuItem("Export PNG..."))
+          export_png_dialog();
         if (!document)
           ImGui::EndDisabled();
         ImGui::Separator();
@@ -355,6 +394,70 @@ namespace App
     load_file(selectedPath);
   }
 
+  void process_pending_export()
+  {
+    if (!pendingExportPath)
+      return;
+    if (pendingExportDelay > 0)
+    {
+      --pendingExportDelay;
+      return;
+    }
+
+    const ImGuiIO &io = ImGui::GetIO();
+    const ImGuiViewport *mainViewport = ImGui::GetMainViewport();
+    const float scaleX = io.DisplayFramebufferScale.x;
+    const float scaleY = io.DisplayFramebufferScale.y;
+    const int framebufferWidth = static_cast<int>(std::round(io.DisplaySize.x * scaleX));
+    const int framebufferHeight = static_cast<int>(std::round(io.DisplaySize.y * scaleY));
+    const int captureX = std::clamp(static_cast<int>(std::floor((viewportCaptureMinimum.x - mainViewport->Pos.x) * scaleX)),
+                                    0, framebufferWidth);
+    const int captureTop = std::clamp(static_cast<int>(std::floor((viewportCaptureMinimum.y - mainViewport->Pos.y) * scaleY)),
+                                      0, framebufferHeight);
+    const int captureRight = std::clamp(static_cast<int>(std::ceil((viewportCaptureMaximum.x - mainViewport->Pos.x) * scaleX)),
+                                        0, framebufferWidth);
+    const int captureBottom = std::clamp(static_cast<int>(std::ceil((viewportCaptureMaximum.y - mainViewport->Pos.y) * scaleY)),
+                                         0, framebufferHeight);
+    const int captureWidth = captureRight - captureX;
+    const int captureHeight = captureBottom - captureTop;
+    const int captureY = framebufferHeight - captureBottom;
+    const std::filesystem::path outputPath = std::move(*pendingExportPath);
+    pendingExportPath.reset();
+
+    if (captureWidth <= 0 || captureHeight <= 0)
+    {
+      log.addf(LogLevel::Error, "Could not export PNG '%s': the viewport is empty.", outputPath.string().c_str());
+      return;
+    }
+
+    constexpr int COMPONENT_COUNT = 3;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(captureWidth) * captureHeight * COMPONENT_COUNT);
+    GLint previousPackAlignment = 0;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(captureX, captureY, captureWidth, captureHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+
+    const std::size_t rowSize = static_cast<std::size_t>(captureWidth) * COMPONENT_COUNT;
+    std::vector<std::uint8_t> temporaryRow(rowSize);
+    for (int row = 0; row < captureHeight / 2; ++row)
+    {
+      std::uint8_t *top = pixels.data() + static_cast<std::size_t>(row) * rowSize;
+      std::uint8_t *bottom = pixels.data() + static_cast<std::size_t>(captureHeight - row - 1) * rowSize;
+      std::copy(top, top + rowSize, temporaryRow.data());
+      std::copy(bottom, bottom + rowSize, top);
+      std::copy(temporaryRow.data(), temporaryRow.data() + rowSize, bottom);
+    }
+
+    if (stbi_write_png(outputPath.string().c_str(), captureWidth, captureHeight,
+                       COMPONENT_COUNT, pixels.data(), static_cast<int>(rowSize)) == 0)
+    {
+      log.addf(LogLevel::Error, "Could not export PNG '%s': could not write the file.", outputPath.string().c_str());
+      return;
+    }
+    log.addf(LogLevel::Info, "Exported PNG '%s'", outputPath.string().c_str());
+  }
+
   Events render()
   {
     Dialog::render();
@@ -364,8 +467,12 @@ namespace App
     render_settings();
 
     ImGui::Begin("Viewport");
+    viewportCaptureMinimum = ImGui::GetCursorScreenPos();
+    const ImVec2 viewportCaptureSize = ImGui::GetContentRegionAvail();
+    viewportCaptureMaximum = ImVec2(viewportCaptureMinimum.x + viewportCaptureSize.x,
+                                    viewportCaptureMinimum.y + viewportCaptureSize.y);
     ImGui::BeginDisabled(showAbout);
-    RomViewport::render(document ? &*document : nullptr, viewportSettings, viewportState);
+    RomViewport::render(document ? &*document : nullptr, viewportSettings, viewportState, !pendingExportPath);
     ImGui::EndDisabled();
     ImGui::End();
 

@@ -268,7 +268,7 @@ namespace RomViewport
     state.fitRequested = false;
   }
 
-  void render(const Nes::Document *document, const Settings &settings, State &state)
+  void render(const Nes::Document *document, const Settings &settings, State &state, const bool showZoomOverlay)
   {
     const ImVec2 canvasPosition = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
@@ -335,14 +335,17 @@ namespace RomViewport
     for (const BankLayout &bank : layout.banks)
       draw_bank(drawList, *document, bank, settings, state, canvasPosition, canvasPosition, canvasMaximum);
 
-    char zoomText[48];
-    std::snprintf(zoomText, sizeof(zoomText), "Zoom: %.2f%%", state.zoom * 100.0);
-    const ImVec2 zoomTextSize = ImGui::CalcTextSize(zoomText);
-    const ImVec2 overlayMinimum(canvasPosition.x + 8.0f, canvasPosition.y + 8.0f);
-    const ImVec2 overlayMaximum(overlayMinimum.x + zoomTextSize.x + 12.0f, overlayMinimum.y + zoomTextSize.y + 8.0f);
-    drawList->AddRectFilled(overlayMinimum, overlayMaximum, IM_COL32(12, 13, 15, 210), 4.0f);
-    drawList->AddRect(overlayMinimum, overlayMaximum, IM_COL32(100, 105, 112, 220), 4.0f);
-    drawList->AddText(ImVec2(overlayMinimum.x + 6.0f, overlayMinimum.y + 4.0f), IM_COL32_WHITE, zoomText);
+    if (showZoomOverlay)
+    {
+      char zoomText[48];
+      std::snprintf(zoomText, sizeof(zoomText), "Zoom: %.2f%%", state.zoom * 100.0);
+      const ImVec2 zoomTextSize = ImGui::CalcTextSize(zoomText);
+      const ImVec2 overlayMinimum(canvasPosition.x + 8.0f, canvasPosition.y + 8.0f);
+      const ImVec2 overlayMaximum(overlayMinimum.x + zoomTextSize.x + 12.0f, overlayMinimum.y + zoomTextSize.y + 8.0f);
+      drawList->AddRectFilled(overlayMinimum, overlayMaximum, IM_COL32(12, 13, 15, 210), 4.0f);
+      drawList->AddRect(overlayMinimum, overlayMaximum, IM_COL32(100, 105, 112, 220), 4.0f);
+      drawList->AddText(ImVec2(overlayMinimum.x + 6.0f, overlayMinimum.y + 4.0f), IM_COL32_WHITE, zoomText);
+    }
 
     drawList->PopClipRect();
   }

@@ -199,6 +199,7 @@ int main(int, char **)
     glClearColor(0.11f, 0.12f, 0.13f, 1.00f);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
+    App::process_pending_export();
 
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
     {
